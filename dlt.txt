@@ -1,0 +1,95 @@
+
+
+
+
+
+we simulate the loading of data from 2 source "2 braches of the same company" east and west tables, and the product and custmer tables
+
+in our dlt_roots folder for or pipeline we have our source_code_transformations folder in which we will perform transformations
+we'll create a bronze folder in it  we will ingest the data starting with the sales data "sales_ingestion.py"
+we will first create an empty streaming table on which will proform a append flow to it that we can bring both sales data to it not limiting us for future 
+company developement say we add an another brach.
+
+import dlt
+
+#Empty streaming table
+dlt.create_streaming_table(
+    name = "sales_stg"
+)
+
+#create east_sales flow
+@dlt.append_flow(target="sales_stg")
+def east_sales():
+
+    df = spark.readStream.table("tuesday.source.sales_east")
+    return df
+
+@dlt.append_flow(target="sales_stg")
+def west_sales():
+
+    df = spark.readStream.table("tuesday.source.sales_west")
+    return df
+
+dry run to test it
+
+create products_ingestion.py 
+
+import dlt
+
+#ingesting products
+@dlt.table(
+    name = "products_stg"
+)
+def products_stg():
+  df = spark.readStream.table("tuesday.source.products")
+  return df
+
+next create customers_ingestion.py
+
+import dlt
+
+#ingesting customers
+@dlt.table(
+    name = "customers_stg"
+)
+def customers_stg():
+  df = spark.readStream.table("tuesday.source.customers")
+  return df
+
+
+what are expections in databrick declarativepipelines?
+Expectations are optional clauses in pipeline materialized view, streaming table, or view creation statements that apply data quality checks on each record passing through a query. Expectations use standard SQL Boolean statements to specify constraints. You can combine multiple expectations for a single dataset and set expectations across all dataset declarations in a pipeline.
+
+You can group multiple expectations together and specify collective actions using the functions expect_all, expect_all_or_drop, and expect_all_or_fail.
+
+These decorators accept a Python dictionary as an argument, where the key is the expectation name and the value is the expectation constraint. You can reuse the same set of expectations in multiple datasets in your pipeline.
+
+example
+valid_pages = {"valid_count": "count > 0", "valid_current_page": "current_page_id IS NOT NULL AND current_page_title IS NOT NULL"}
+@dlt.expect_all(valid_pages)
+@dlt.expect_all_or_drop(valid_pages)
+@dlt.expect_all_or_fail(valid_pages)
+
+
+in the customers_ingestion.py we will set our customer table expectations
+
+
+# Customer expectations
+customers_rules = {
+  "rule_1" : " customer_id IS NOT NULL",
+  "rule_2" : "customer IS NOT NULL "
+}
+
+@dlt.expect_all_or_drop(customers_rules)
+
+in the products_ingestion.py we will set our products table expectations
+
+products_rules = {
+  "rule_1" : " product_id IS NOT NULL",
+  "rule_2" : "price >= 0"
+}
+@dlt.expect_all_or_drop(products_rules)
+
+
+
+
