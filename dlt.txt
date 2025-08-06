@@ -1,4 +1,103 @@
 
+DWH_source.sql
+
+-- sales east create table
+
+CREATE TABLE sales_east (
+    sales_id INT PRIMARY KEY,
+    customer_id INT,
+    product_id INT,
+    quantity INT,
+    amount DECIMAL(10,2),
+    sale_timestamp TIMESTAMP
+);
+
+-- Insert 1 (Initial Load)
+INSERT INTO sales_east VALUES
+(1, 101, 201, 2, 200.00, '2025-08-01 10:00:00'),
+(2, 102, 202, 1, 120.00, '2025-08-01 10:05:00'),
+(3, 103, 203, 5, 500.00, '2025-08-01 10:10:00'),
+(4, 104, 204, 3, 330.00, '2025-08-01 10:15:00'),
+(5, 105, 205, 4, 440.00, '2025-08-01 10:20:00');
+
+
+-----------------------------------------------------------------------------------
+-- create west sales table
+
+CREATE TABLE sales_west (
+    sales_id INT PRIMARY KEY,
+    customer_id INT,
+    product_id INT,
+    quantity INT,
+    amount DECIMAL(10,2),
+    sale_timestamp TIMESTAMP
+);
+
+-- Insert 1 (Initial Load)
+INSERT INTO sales_west VALUES
+(8, 107, 207, 1, 150.00, '2025-08-01 11:00:00'),
+(9, 108, 208, 2, 260.00, '2025-08-01 11:05:00'),
+(10, 109, 209, 3, 390.00, '2025-08-01 11:10:00'),
+(11, 110, 210, 1, 130.00, '2025-08-01 11:15:00'),
+(12, 111, 211, 4, 560.00, '2025-08-01 11:20:00');
+
+
+--------------------------------------------------------------------------------------
+-- create products table
+
+CREATE TABLE products (
+    product_id INT PRIMARY KEY,
+    product_name VARCHAR(100),
+    category VARCHAR(50),
+    price DECIMAL(10,2),
+    last_updated TIMESTAMP
+);
+
+ -- Insert 1 (Initial Load)
+INSERT INTO products VALUES
+(201, 'Laptop', 'Electronics', 1000.00, '2025-07-31 12:00:00'),
+(202, 'Phone', 'Electronics', 120.00, '2025-07-31 12:05:00'),
+(203, 'Monitor', 'Electronics', 100.00, '2025-07-31 12:10:00'),
+(204, 'Chair', 'Furniture', 110.00, '2025-07-31 12:15:00'),
+(205, 'Desk', 'Furniture', 150.00, '2025-07-31 12:20:00'),
+(206, 'Mouse', 'Electronics', 50.00, '2025-07-31 12:25:00'),
+(207, 'Keyboard', 'Electronics', 60.00, '2025-07-31 12:30:00'),
+(208, 'Lamp', 'Furniture', 130.00, '2025-07-31 12:35:00'),
+(209, 'Router', 'Electronics', 130.00, '2025-07-31 12:40:00'),
+(210, 'Table', 'Furniture', 130.00, '2025-07-31 12:45:00'),
+(211, 'Notebook', 'Stationery', 140.00, '2025-07-31 12:50:00'),
+(212, 'Pen', 'Stationery', 150.00, '2025-07-31 12:55:00');
+
+
+
+
+
+----------------------------------------------------------------------------------------------------
+
+-- create customers table
+CREATE TABLE customers (
+    customer_id INT PRIMARY KEY,
+    customer_name VARCHAR(100),
+    region VARCHAR(50),
+    last_updated TIMESTAMP
+);
+
+
+ -- Insert 1 (Initial Load)
+INSERT INTO customers VALUES
+(101, 'Alice', 'East', '2025-07-31 13:00:00'),
+(102, 'Bob', 'East', '2025-07-31 13:05:00'),
+(103, 'Charlie', 'East', '2025-07-31 13:10:00'),
+(104, 'Diana', 'East', '2025-07-31 13:15:00'),
+(105, 'Ethan', 'East', '2025-07-31 13:20:00'),
+(106, 'Fiona', 'East', '2025-07-31 13:25:00'),
+(107, 'George', 'West', '2025-07-31 13:30:00'),
+(108, 'Hannah', 'West', '2025-07-31 13:35:00'),
+(109, 'Ian', 'West', '2025-07-31 13:40:00'),
+(110, 'Jane', 'West', '2025-07-31 13:45:00'),
+(111, 'Kevin', 'West', '2025-07-31 13:50:00'),
+(112, 'Laura', 'West', '2025-07-31 13:55:00');
+
 
 
 
@@ -89,6 +188,273 @@ products_rules = {
   "rule_2" : "price >= 0"
 }
 @dlt.expect_all_or_drop(products_rules)
+
+this concludes our bronze layer and next we will move to the silver layer
+we will create upserted tables,using autocdc "applied changes" based on the ket column and date
+
+since working with streaming tables can be complicated we will not just create streaming tables but we will also create a streaming view which
+will be used for import date to our gold layer as you can not use upserted tables "a changing table" as a source for a streaming table
+the are ways to around this if you must but the changes to the data will not be captured
+so we will create streaming tables and streaming views for them
+streaming view will only capature the new / append data which go to the gold layer
+in order to perform transformations in the silver layer we also need a view 
+
+
+we"ll start with the sales_enr.py
+
+import dlt
+from pyspark.sql.functions import *
+
+# Applying transformation
+@dlt.view(
+    name = "sales_enr_view"
+)
+def sales_stg_transformed():
+  
+    df = spark.readStream.table("sales_stg")
+    df = df.withColumn("total_amount", col("quantity") * col("amount"))
+    return df
+# creating destination silver table
+dlt.create_streaming_table(
+    name = "sales_enr"
+
+)
+
+dlt.create_auto_cdc_flow(
+  target = "sales_enr",
+  source = "sales_enr_view",
+  keys = ["sales_id"],
+  sequence_by = "sale_timestamp",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 1,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+
+we will repeat this for products in transformed_products.py
+
+
+import dlt
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Applying transformation
+@dlt.view(
+    name = "products_enr_view"
+)
+def products_stg_transformed():
+  
+    df = spark.readStream.table("products_stg")
+    df = df.withColumn("price", col("price").cast(IntegerType()))
+    return df
+# creating destination silver table
+dlt.create_streaming_table(
+    name = "products_enr"
+
+)
+
+dlt.create_auto_cdc_flow(
+  target = "products_enr",
+  source = "products_enr_view",
+  keys = ["product_id"],
+  sequence_by = "last_updated",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 1,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+lastly for the silver layer we have transformed_customers.py
+
+import dlt
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Applying transformation
+@dlt.view(
+    name = "customers_enr_view"
+)
+def customers_stg_transformed():
+  
+    df = spark.readStream.table("customers_stg")
+    df = df.withColumn("customer_name", upper(col("customer_name")))
+    return df
+# creating destination silver table
+dlt.create_streaming_table(
+    name = "customers_enr"
+
+)
+
+dlt.create_auto_cdc_flow(
+  target = "customers_enr",
+  source = "customers_enr_view",
+  keys = ["customer_id"],
+  sequence_by = "last_updated",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 1,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+
+moving on to our gold layer we will create the folder "gold" in source_code_transformations
+than in gold create "dim_products.py"
+
+
+import dlt
+#create empty streaming table
+dlt.create_streaming_table(
+    name = "dim_products"
+)
+
+# AUTO CDC FLOW
+dlt.create_auto_cdc_flow(
+  target = "dim_products",
+  source = "products_enr_view",
+  keys = ["product_id"],
+  sequence_by = "last_updated",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 2,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+
+
+
+next dim_customers.py
+
+
+#create an empty streaming table
+dlt.create_streaming_table(
+    name = "dim_customers"
+)
+
+# Auto CDC FLOW
+dlt.create_auto_cdc_flow(
+  target = "dim_customers",
+  source = "customers_enr_view",
+  keys = ["customer_id"],
+  sequence_by = "last_updated",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 2,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+
+lastly fact table in "fact_sales.py"
+
+
+
+
+import dlt
+#create empty streaming table
+dlt.create_streaming_table(
+    name = "fact_sales"
+)
+
+# AUTO CDC FLOW
+dlt.create_auto_cdc_flow(
+  target = "fact_sales",
+  source = "sales_enr_view",
+  keys = ["sales_id"],
+  sequence_by = "sale_timestamp",
+  ignore_null_updates = False,
+  apply_as_deletes = None,
+  apply_as_truncates = None,
+  column_list = None,
+  except_column_list = None,
+  stored_as_scd_type = 1,
+  track_history_column_list = None,
+  track_history_except_column_list = None
+)
+
+we should never use scd 2 on fact table so will keep to an upserted table using scd 1
+
+next we will create a bussiness view in our gold layer "business_sales.py"
+
+we  will a materilzed view over a streaming view cause streaming view will on capture / process only the incremental data were as the materlized view will keep everything leading to correct answers
+
+import dlt
+from pyspark.sql.functions import *
+#create a mat view
+
+@dlt.table(
+    name = "business_sales1"
+)
+def business_sales1():
+
+    df_fact = spark.read.table("fact_sales")
+    df_dimProd = spark.read.table("dim_products")
+    df_dimCust = spark.read.table("dim_customers")
+
+    df_join = df_fact.join(df_dimCust, df_fact.customer_id == df_dimCust.customer_id, "inner")\
+        .join(df_dimProd, df_fact.product_id == df_dimProd.product_id, "inner")
+
+    df_prun = df_join.select("region", "category", "total_amount")
+
+    df_agg = df_prun.groupBy("region", "category").agg(sum("total_amount").alias("total_sales"))
+    return df_agg
+    
+  
+dry to test everything once it runs wil error run the pipeline
+
+
+validate the pipeline
+in DWH_source.sql run
+
+-- incremental load
+
+# Insert 2 (Incremental Load)
+INSERT INTO sales_east VALUES
+(6, 101, 203, 1, 100.00, '2025-08-02 09:00:00'),
+(7, 106, 206, 2, 250.00, '2025-08-02 09:15:00');
+
+-- Insert 2 (Incremental Load)
+INSERT INTO sales_west VALUES
+(13, 112, 212, 2, 300.00, '2025-08-02 09:30:00'),
+(14, 107, 208, 1, 130.00, '2025-08-02 09:45:00');
+-- incremental load
+
+-- Insert 2 (SCD Update)
+-- Price change for product_id 203
+INSERT INTO products VALUES
+(203, 'Monitor', 'Electronics', 90.00, '2025-08-02 08:00:00');
+
+-- Name change for product_id 208
+INSERT INTO products VALUES
+(208, 'Desk Lamp', 'Furniture', 130.00, '2025-08-02 08:10:00');
+
+-- Insert 2 (SCD Update)
+-- Region change for customer 103
+INSERT INTO customers VALUES
+(103, 'Charlie', 'Central', '2025-08-02 08:30:00');
+
+-- Name correction for customer 107
+INSERT INTO customers VALUES
+(107, 'George Smith', 'West', '2025-08-02 08:40:00');
 
 
 
